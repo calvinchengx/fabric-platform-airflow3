@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import pathlib
 import re
+import sys
 
 ROOT = pathlib.Path(__file__).resolve().parent.parent
 
@@ -57,3 +58,49 @@ def test_the_acceptance_run_asserts_the_numbers_and_not_only_the_run():
         f"the assert step does not read {out.group(1)}, which is where "
         f"`make snapshot` writes"
     )
+
+
+# --- digest pins ---------------------------------------------------------------
+
+def _scripts():
+    sys.path.insert(0, str(ROOT / "scripts"))
+
+
+def test_every_image_in_the_compose_file_is_fetched_by_digest():
+    """Not a list to keep in step — every `image:` line, whatever it names.
+
+    An allowlist would pass the day someone adds a service and forgets it,
+    which is exactly when the pin is missing.
+    """
+    compose = (ROOT / "docker-compose.yml").read_text(encoding="utf-8")
+    for line in compose.splitlines():
+        stripped = line.strip()
+        if not stripped.startswith("image:"):
+            continue
+        assert "@${" in stripped and "_DIGEST" in stripped, (
+            f"pulled by tag alone: {stripped}")
+        assert ":-" not in stripped, (
+            f"a default version is a floating pin in fixed clothing: {stripped}")
+
+
+def test_every_pin_has_both_a_version_and_a_digest():
+    _scripts()
+    from digests import PINS
+
+    text = (ROOT / "versions.env").read_text(encoding="utf-8")
+    for prefix in PINS:
+        assert re.search(rf"^{prefix}_VERSION=.+$", text, re.M), prefix
+        assert re.search(rf"^{prefix}_DIGEST=sha256:[0-9a-f]{{64}}$", text, re.M), prefix
+
+
+def test_the_release_script_and_the_pin_list_agree():
+    """`set_release.PINS` re-resolves on every release; `digests.PINS` is the
+    full set. An image in the first and not the second would be invisible to
+    refresh_digests and to the compose check above."""
+    _scripts()
+    import digests
+    import set_release
+
+    assert set(set_release.PINS) <= set(digests.PINS), (
+        f"release-tracked but unknown to digests.PINS: "
+        f"{sorted(set(set_release.PINS) - set(digests.PINS))}")
