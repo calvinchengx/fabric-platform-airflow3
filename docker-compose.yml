@@ -37,7 +37,7 @@
 services:
   postgres:
     mem_limit: 512m
-    image: postgres:${POSTGRES_VERSION:-16}
+    image: postgres:${POSTGRES_VERSION:?see versions.env}@${POSTGRES_DIGEST:?see versions.env}
     environment:
       POSTGRES_USER: airflow
       POSTGRES_PASSWORD: airflow
@@ -49,7 +49,7 @@ services:
 
   entra-emulator:
     mem_limit: 512m
-    image: ghcr.io/calvinchengx/entra-emulator:${ENTRA_EMULATOR_VERSION:?see versions.env}
+    image: ghcr.io/calvinchengx/entra-emulator:${ENTRA_EMULATOR_VERSION:?see versions.env}@${ENTRA_EMULATOR_DIGEST:?see versions.env}
     environment:
       ORIGIN_MODE: compat
       TLS_ENABLED: "false"
@@ -68,7 +68,7 @@ services:
   # Warehouse is Fabric's own.
   sqlserver:
     mem_limit: 3g
-    image: mcr.microsoft.com/mssql/server:${MSSQL_VERSION:-2022-latest}
+    image: mcr.microsoft.com/mssql/server:${MSSQL_VERSION:?see versions.env}@${MSSQL_DIGEST:?see versions.env}
     platform: linux/amd64
     environment:
       ACCEPT_EULA: "Y"
