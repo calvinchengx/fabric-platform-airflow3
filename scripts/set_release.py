@@ -23,11 +23,24 @@ ROOT = pathlib.Path(__file__).resolve().parent.parent
 VERSIONS = ROOT / "versions.env"
 
 # var-prefix -> (image, which version var supplies its tag)
+#
+# THE SIDECARS RESOLVE BY THE RELEASE TAG, NOT THEIR DEPENDENCY TAG. Both tags
+# name the same image for a given release -- `emulator-sail:0.7.0` and
+# `emulator-sail:0.34.0` are one digest -- so reading either one appears to
+# work. They differ in what they MEAN: `:0.7.0` is "whatever the Sail-0.7.0 tag
+# points at right now", which moves under us on every fabric release, and
+# `:0.34.0` is "what release 0.34.0 published", which is the thing being pinned.
 PINS = {
     "FABRIC_EMULATOR": ("ghcr.io/calvinchengx/fabric-emulator", "release"),
-    "SAIL_ENGINE": ("ghcr.io/calvinchengx/emulator-sail", "SAIL_ENGINE_VERSION"),
-    "SPARK_CLIENT": ("ghcr.io/calvinchengx/emulator-spark-agent", "SPARK_CLIENT_VERSION"),
+    "SAIL_ENGINE": ("ghcr.io/calvinchengx/emulator-sail", "release"),
+    "SPARK_CLIENT": ("ghcr.io/calvinchengx/emulator-spark-agent", "release"),
 }
+
+# Their tag names the dependency they carry (0.7.0, 4.2.0) and so cannot say
+# which release built them. `_RELEASE` says it, and this is what keeps it true:
+# the labels read 0.33.0 over 0.34.0 digests for six days because nothing here
+# moved them, and versions.env asserted something false the whole time.
+CARRIES_A_DEPENDENCY_TAG = ("SAIL_ENGINE", "SPARK_CLIENT")
 
 
 def digest_of(image: str, tag: str) -> str:
@@ -61,6 +74,11 @@ def main() -> int:
         text = re.sub(rf"^{prefix}_DIGEST=.*$", f"{prefix}_DIGEST={digest}", text, flags=re.M)
         moved = "moved" if before != digest else "unchanged"
         print(f"{image}:{tag}\n  {before[:19]}… -> {digest[:19]}…  ({moved})")
+        if prefix in CARRIES_A_DEPENDENCY_TAG:
+            if not re.search(rf"^{prefix}_RELEASE=", text, re.M):
+                raise SystemExit(f"{prefix}_RELEASE not found in versions.env")
+            text = re.sub(rf"^{prefix}_RELEASE=.*$", f"{prefix}_RELEASE={release}",
+                          text, flags=re.M)
 
     text = re.sub(r"^FABRIC_EMULATOR_VERSION=.*$",
                   f"FABRIC_EMULATOR_VERSION={release}", text, flags=re.M)
