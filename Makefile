@@ -31,7 +31,21 @@ help: ## This list
 up: doctor sources ## Build the worker from the product's pyproject.toml and start the stack
 	@echo "platform: product = $(PRODUCT_ABS)"
 	@echo "platform: sources = $(SOURCES_ABS)"
-	$(COMPOSE) up --build -d
+# WHAT THE STACK SAID ON THE WAY DOWN. `compose up` resolves depends_on
+# itself and reports only `dependency failed to start` -- which container, and
+# nothing about WHY it exited. That is how G48, a released emulator that did
+# not boot in a sibling stack, survived a release and three CI runs without a
+# single line of diagnosis. The logs exist at this moment and are gone as soon
+# as anyone runs `make down`, which CI does in its cleanup step.
+#
+# `ps -a` first because it names which container died and with what code; the
+# logs then say what it said on the way out. Both are bounded (`--tail`) so a
+# noisy stack cannot bury the failure it is meant to explain.
+	@$(COMPOSE) up --build -d || { \
+	  echo "platform: the stack did not come up. what the containers said:"; \
+	  $(COMPOSE) ps -a; \
+	  $(COMPOSE) logs --no-color --tail=80; \
+	  exit 1; }
 	@echo "platform: Airflow on http://localhost:$${AIRFLOW_PORT:-18080}"
 
 sources: ## Generate the compose fragment for the vendors a sources repo declares
