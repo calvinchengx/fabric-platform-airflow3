@@ -225,6 +225,14 @@ creds: ## The Airflow admin login for this stack
 
 doctor: ## Refuse to start against a product that cannot work
 	@test -d "$(PRODUCT_ABS)" || { echo "no product at $(PRODUCT_ABS)"; exit 1; }
+# THE IMAGE SET, BEFORE ANYTHING STARTS. emulator-sail and
+# emulator-spark-agent are packaged BY a fabric-emulator release but carry
+# their own upstream versions, so versions.env holds both facts per image.
+# Bumping the emulator and missing the two _RELEASE fields leaves every digest
+# valid, every service starting, and the components not the set that was
+# tested together -- nothing goes red on its own. Stdlib only, so it can
+# refuse before a single image is pulled.
+	@python3 scripts/check_release_pins.py
 	@test -f "$(PRODUCT_ABS)/pyproject.toml" || { \
 	  echo "$(PRODUCT_ABS) has no pyproject.toml -- the worker would install nothing"; exit 1; }
 	@test -d "$(PRODUCT_ABS)/dags" || { \
