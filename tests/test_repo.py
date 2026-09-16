@@ -104,3 +104,55 @@ def test_the_release_script_and_the_pin_list_agree():
     assert set(set_release.PINS) <= set(digests.PINS), (
         f"release-tracked but unknown to digests.PINS: "
         f"{sorted(set(set_release.PINS) - set(digests.PINS))}")
+
+
+def test_a_release_moves_each_sidecar_version_to_what_it_carries(tmp_path, monkeypatch):
+    """v0.36.0 moved pysail 0.7.0 -> 0.7.1 and this script left
+    SAIL_ENGINE_VERSION at 0.7.0 beside the 0.36.0 digest. The version now
+    comes from the release's own pyproject.toml, and every digest from the
+    release's own tag."""
+    _scripts()
+    import set_release
+
+    versions = tmp_path / "versions.env"
+    versions.write_text((ROOT / "versions.env").read_text(encoding="utf-8"),
+                        encoding="utf-8")
+    fake = "sha256:" + "c" * 64
+    resolved = []
+    pyproject = ('dependencies = ["pysail==8.8.8", "pyspark-client==7.7.7"]\n'
+                 'engine = ["pysail==8.8.8"]\n')
+    monkeypatch.setattr(set_release, "VERSIONS", versions)
+    monkeypatch.setattr(set_release, "digest_of",
+                        lambda image, tag: resolved.append(tag) or fake)
+    monkeypatch.setattr(set_release, "fetch",
+                        lambda url: pyproject if "/v9.9.9/" in url else "")
+    monkeypatch.setattr(sys, "argv", ["set_release.py", "9.9.9"])
+    assert set_release.main() == 0
+
+    written = versions.read_text(encoding="utf-8")
+    assert set(resolved) == {"9.9.9"}, resolved
+    assert re.search(r"^FABRIC_EMULATOR_VERSION=9\.9\.9$", written, re.M)
+    assert re.search(r"^SAIL_ENGINE_VERSION=8\.8\.8$", written, re.M)
+    assert re.search(r"^SPARK_CLIENT_VERSION=7\.7\.7$", written, re.M)
+    for prefix in set_release.CARRIES_A_DEPENDENCY_TAG:
+        assert re.search(rf"^{prefix}_RELEASE=9\.9\.9$", written, re.M), prefix
+        assert re.search(rf"^{prefix}_DIGEST={fake}$", written, re.M), prefix
+
+
+def test_a_release_with_an_ambiguous_dependency_pin_writes_nothing(tmp_path, monkeypatch):
+    import pytest
+
+    _scripts()
+    import set_release
+
+    versions = tmp_path / "versions.env"
+    original = (ROOT / "versions.env").read_text(encoding="utf-8")
+    versions.write_text(original, encoding="utf-8")
+    monkeypatch.setattr(set_release, "VERSIONS", versions)
+    monkeypatch.setattr(set_release, "digest_of", lambda image, tag: "sha256:" + "d" * 64)
+    monkeypatch.setattr(set_release, "fetch",
+                        lambda url: '"pysail==0.7.0" "pysail==0.7.1" "pyspark-client==4.2.0"')
+    monkeypatch.setattr(sys, "argv", ["set_release.py", "9.9.9"])
+    with pytest.raises(SystemExit, match="pysail"):
+        set_release.main()
+    assert versions.read_text(encoding="utf-8") == original

@@ -10,6 +10,11 @@ Sail and statement agent, which is a combination nobody tested.
 Measured on v0.29.0: all three digests moved while two of the three tags stayed
 exactly where they were (`emulator-sail:0.7.0`, `emulator-spark-agent:4.2.0`).
 
+THOSE TAGS DO MOVE WHEN THE RELEASE BUMPS THE DEPENDENCY. v0.36.0 moved pysail
+0.7.0 -> 0.7.1, and this script left SAIL_ENGINE_VERSION at 0.7.0 beside the
+0.36.0 digest. So each sidecar's _VERSION is now read from fabric-emulator's
+pyproject.toml at the release tag, the same pin that chose the image's tag.
+
 Usage:  python3 scripts/set_release.py 0.29.0
 """
 from __future__ import annotations
@@ -18,6 +23,7 @@ import pathlib
 import re
 import subprocess
 import sys
+import urllib.request
 
 ROOT = pathlib.Path(__file__).resolve().parent.parent
 VERSIONS = ROOT / "versions.env"
@@ -40,7 +46,40 @@ PINS = {
 # which release built them. `_RELEASE` says it, and this is what keeps it true:
 # the labels read 0.33.0 over 0.34.0 digests for six days because nothing here
 # moved them, and versions.env asserted something false the whole time.
-CARRIES_A_DEPENDENCY_TAG = ("SAIL_ENGINE", "SPARK_CLIENT")
+#
+# prefix -> the pin in fabric-emulator's pyproject.toml the image is tagged
+# with. The same map as fabric-emulator's scripts/image_tags.py.
+TAGGED_BY = {"SAIL_ENGINE": "pysail", "SPARK_CLIENT": "pyspark-client"}
+CARRIES_A_DEPENDENCY_TAG = tuple(TAGGED_BY)
+
+# A TAG, not a branch: what the release was built from, and it cannot move.
+FABRIC_PYPROJECT = ("https://raw.githubusercontent.com/calvinchengx/"
+                    "fabric-emulator/v{release}/pyproject.toml")
+
+
+def fetch(url: str) -> str:
+    with urllib.request.urlopen(url, timeout=30) as resp:
+        return resp.read().decode("utf-8")
+
+
+def carried_versions(release: str) -> dict[str, str]:
+    """The dependency version each sidecar carries in `release`.
+
+    Read with image_tags.py's own rule: exactly one `==` pin per package.
+    """
+    url = FABRIC_PYPROJECT.format(release=release)
+    try:
+        text = fetch(url)
+    except OSError as err:
+        raise SystemExit(f"cannot read {url}: {err}") from None
+    carried = {}
+    for prefix, package in TAGGED_BY.items():
+        found = set(re.findall(rf'"{re.escape(package)}==([0-9][^"]*)"', text))
+        if len(found) != 1:
+            raise SystemExit(f"v{release} pins {package} as {sorted(found) or 'nothing'}; "
+                             f"expected exactly one == version")
+        carried[prefix] = found.pop()
+    return carried
 
 
 def digest_of(image: str, tag: str) -> str:
@@ -59,6 +98,9 @@ def main() -> int:
     if len(sys.argv) != 2:
         raise SystemExit("usage: set_release.py <emulator-version>   e.g. 0.29.0")
     release = sys.argv[1].lstrip("v")
+    # Before anything is written: a release whose pins cannot be read is not
+    # one this script can describe.
+    carried = carried_versions(release)
     text = VERSIONS.read_text()
 
     def current(var: str) -> str:
@@ -79,6 +121,11 @@ def main() -> int:
                 raise SystemExit(f"{prefix}_RELEASE not found in versions.env")
             text = re.sub(rf"^{prefix}_RELEASE=.*$", f"{prefix}_RELEASE={release}",
                           text, flags=re.M)
+            was = current(f"{prefix}_VERSION")
+            text = re.sub(rf"^{prefix}_VERSION=.*$", f"{prefix}_VERSION={carried[prefix]}",
+                          text, flags=re.M)
+            moved = "moved" if was != carried[prefix] else "unchanged"
+            print(f"  {prefix}_VERSION: {was} -> {carried[prefix]}  ({moved})")
 
     text = re.sub(r"^FABRIC_EMULATOR_VERSION=.*$",
                   f"FABRIC_EMULATOR_VERSION={release}", text, flags=re.M)
