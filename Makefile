@@ -73,6 +73,14 @@ VERIFY_POLL ?= 15
 # not asking about a missing DAG.
 VERIFY_PARSE_WAIT ?= 300
 
+# A FAILURE THAT NAMES A TASK AND NOT THE REASON IS HALF A VERDICT. This target
+# used to print the failed task ids and point at `make logs`, which follows the
+# whole stack -- so the one place the error was written (the task's own log,
+# inside the worker) was the one place nothing read. A nightly went red on
+# `gold.fct_orders_run` and the CI log said exactly that and nothing else.
+#
+# `airflow tasks logs` takes the task BEFORE the run, which is the order that
+# surprises: dag_id, task_id, run_id.
 verify: ## Run a DAG and FAIL if it fails:  make verify DAG=contoso_daily
 # WHAT `trigger` ONLY LOOKED LIKE IT DID. Its help said "and wait" and it
 # returned the moment the run was queued, so NOTHING IN THIS REPOSITORY EVER
@@ -177,6 +185,12 @@ verify: ## Run a DAG and FAIL if it fails:  make verify DAG=contoso_daily
 	     where dag_id='$(DAG)' and run_id='$$run' and coalesce(state,'x') <> 'success' \
 	     order by (state = 'failed') desc, task_id;" 2>/dev/null || true; \
 	  echo "logs:  make logs"; \
+	  for t in $$($(COMPOSE) exec -T postgres psql -U airflow -d airflow -t -A -c \
+	    "select task_id from task_instance where dag_id='$(DAG)' and run_id='$$run' and state='failed'" 2>/dev/null); do \
+	    echo ""; \
+	    echo "=== $$t (last 80 lines of its own log) ==="; \
+	    $(COMPOSE) exec -T airflow airflow tasks logs $(DAG) "$$t" "$$run" 2>/dev/null | tail -80 || true; \
+	  done; \
 	  exit 1
 
 # THE PRODUCT NAMES ITS DAG; THE PLATFORM MUST NOT. `verify` insists on DAG=
